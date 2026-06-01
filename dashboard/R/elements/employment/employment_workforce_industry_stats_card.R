@@ -142,11 +142,11 @@ employment_workforce_industry_stats_card_server <- function(id, conn = APP_DB$po
       req(nrow(snap) > 0)
 
       dbt_build_treemap(
-        data        = snap,
-        label_col   = "industry",
-        value_col   = "value",
-        palette     = dbt_palettes$gaf,
-        root_label  = "All industries"
+        data            = snap,
+        label_col       = "industry",
+        value_col       = "value",
+        palette         = dbt_palettes$gaf,
+        exclude_pattern = "^(All|Total)\\b"   # drop "All services", "Total services", etc.
       )
     })
 

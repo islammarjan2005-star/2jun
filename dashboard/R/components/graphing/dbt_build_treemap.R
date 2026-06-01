@@ -4,12 +4,12 @@
 # treemap, sizing each tile by `value_col` and labelling it by `label_col`.
 dbt_build_treemap <- function(
   data,
-  label_col    = "industry",
-  value_col    = "value",
-  palette      = dbt_palettes$gaf,
-  value_prefix = "",
-  value_suffix = "",
-  root_label   = "All"
+  label_col       = "industry",
+  value_col       = "value",
+  palette         = dbt_palettes$gaf,
+  value_prefix    = "",
+  value_suffix    = "",
+  exclude_pattern = NULL   # regex of labels to drop (e.g. totals); never to empty
 ) {
 
   # ---------- Guards ----------
@@ -26,22 +26,43 @@ dbt_build_treemap <- function(
   if (!nrow(df)) return(plotly::plot_ly(type = "treemap"))
 
   # ---------- One tile per label (sum within label) ----------
-  df <- df |>
+  agg <- df |>
     dplyr::group_by(.data[[label_col]]) |>
     dplyr::summarise(.value = sum(.data[[value_col]], na.rm = TRUE), .groups = "drop") |>
-    dplyr::arrange(dplyr::desc(.data$.value))
+    dplyr::arrange(dplyr::desc(.data[[".value"]]))
 
-  labels  <- as.character(df[[label_col]])
-  values  <- df$.value
+  labels <- as.character(agg[[label_col]])
+  values <- agg[[".value"]]
 
-  # Flat treemap: every tile hangs off a single implicit root
-  parents <- rep(root_label, length(labels))
+  # ---------- Optionally drop aggregate/total rows ----------
+  # Never drop down to an empty plot: if every remaining row is a total,
+  # keep what we have so the user still sees something.
+  if (!is.null(exclude_pattern) && nzchar(exclude_pattern)) {
+    keep <- !grepl(exclude_pattern, labels, ignore.case = TRUE, perl = TRUE)
+    if (any(keep)) {
+      labels <- labels[keep]
+      values <- values[keep]
+    }
+  }
+
+  # Flat treemap: every tile is top-level (parent ""), so a tile can never
+  # be its own parent (which would stop plotly from rendering).
+  parents <- rep("", length(labels))
 
   # Recycle the palette across tiles
   cols <- rep(palette, length.out = length(labels))
 
-  # Pre-format values with thousands separators for tile + hover text
+  # Pre-format values + shares for tile and hover text
   fmt_vals <- govuk_format_number(values, digits = 0)
+  total    <- sum(values, na.rm = TRUE)
+  share    <- if (total > 0) values / total else rep(0, length(values))
+  pct      <- paste0(formatC(100 * share, format = "f", digits = 1), "%")
+
+  hover <- paste0(
+    "<b>", labels, "</b><br>",
+    value_prefix, fmt_vals, value_suffix,
+    "<br>", pct, " of total"
+  )
 
   # ---------- Plot ----------
   plotly::plot_ly(
@@ -49,24 +70,16 @@ dbt_build_treemap <- function(
     labels       = labels,
     parents      = parents,
     values       = values,
-    customdata   = fmt_vals,
-    branchvalues = "total",
+    text         = fmt_vals,
+    texttemplate = paste0("%{label}<br>", value_prefix, "%{text}", value_suffix),
+    hovertext    = hover,
+    hoverinfo    = "text",
     sort         = TRUE,
     marker       = list(
       colors = cols,
       line   = list(width = 1, color = "#ffffff")
     ),
-    texttemplate = paste0(
-      "%{label}<br>", value_prefix, "%{customdata}", value_suffix
-    ),
-    hovertemplate = paste0(
-      "<b>%{label}</b><br>",
-      value_prefix, "%{customdata}", value_suffix,
-      "<br>%{percentParent:.1%} of total",
-      "<extra></extra>"
-    ),
-    pathbar = list(visible = FALSE),
-    tiling  = list(pad = 1)
+    tiling = list(pad = 1)
   ) |>
     plotly::layout(
       margin = list(t = 10, l = 10, r = 10, b = 10)

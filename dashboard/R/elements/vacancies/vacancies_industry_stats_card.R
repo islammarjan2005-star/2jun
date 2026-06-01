@@ -173,35 +173,27 @@ vacancies_industry_stats_card_server <- function(id, conn = APP_DB$pool) {
         df <- out$data
         snap_date <- max(df$time_period, na.rm = TRUE)
         snap <- df[!is.na(df$time_period) & df$time_period == snap_date, , drop = FALSE]
-
-        # Drop aggregate/total series so the treemap shows the component
-        # breakdown — but keep them if no genuine components are selected.
-        totals    <- c("All vacancies", "Total services")
-        non_total <- snap[!snap$business_metric %in% totals, , drop = FALSE]
-        if (nrow(non_total) > 0) snap <- non_total
-
         req(nrow(snap) > 0)
-        return(
-          dbt_build_treemap(
-            data       = snap,
-            label_col  = "business_metric",
-            value_col  = "value",
-            palette    = dbt_palettes$gaf,
-            root_label = "All vacancies"
-          )
+
+        dbt_build_treemap(
+          data            = snap,
+          label_col       = "business_metric",
+          value_col       = "value",
+          palette         = dbt_palettes$gaf,
+          exclude_pattern = "^(All|Total)\\b"   # drop "All vacancies", "Total services", etc.
+        )
+      } else {
+        dbt_ts_plot(
+          df = out$data,
+          chart_type = input$chart_type,
+          bar_interval = input$stack_mode,
+          bar_agg = "last", y_title = "No.",
+          palette = dbt_palettes$gaf, initial_legend_mode = "hidden",
+          group_col = "business_metric",
+          vlines = date_lines$values_out(), vline_labels = date_lines$labels_out(),
+          hlines = value_lines$values_out(), hline_labels = value_lines$labels_out()
         )
       }
-
-      dbt_ts_plot(
-        df = out$data,
-        chart_type = input$chart_type,
-        bar_interval = input$stack_mode,
-        bar_agg = "last", y_title = "No.",
-        palette = dbt_palettes$gaf, initial_legend_mode = "hidden",
-        group_col = "business_metric",
-        vlines = date_lines$values_out(), vline_labels = date_lines$labels_out(),
-        hlines = value_lines$values_out(), hline_labels = value_lines$labels_out()
-      )
     })
 
   })
