@@ -9,7 +9,8 @@ dbt_build_treemap <- function(
   palette         = dbt_palettes$gaf,
   value_prefix    = "",
   value_suffix    = "",
-  exclude_pattern = NULL   # regex of labels to drop (e.g. totals); never to empty
+  exclude_pattern = NULL,  # regex of labels to drop (e.g. totals); never to empty
+  title           = NULL   # small caption shown above the treemap (e.g. snapshot period)
 ) {
 
   # ---------- Guards ----------
@@ -65,7 +66,9 @@ dbt_build_treemap <- function(
   )
 
   # ---------- Plot ----------
-  plotly::plot_ly(
+  has_title <- !is.null(title) && nzchar(title)
+
+  plt <- plotly::plot_ly(
     type         = "treemap",
     labels       = labels,
     parents      = parents,
@@ -82,7 +85,23 @@ dbt_build_treemap <- function(
     tiling = list(pad = 1)
   ) |>
     plotly::layout(
-      margin = list(t = 10, l = 10, r = 10, b = 10)
+      margin = list(t = if (has_title) 34 else 10, l = 10, r = 10, b = 10)
     ) |>
     plotly::config(displayModeBar = FALSE)
+
+  if (has_title) {
+    plt <- plt |>
+      plotly::layout(
+        title = list(
+          text    = title,
+          x       = 0.02,
+          xanchor = "left",
+          y       = 0.98,
+          yanchor = "top",
+          font    = list(size = 13, color = "#505a5f")
+        )
+      )
+  }
+
+  plt
 }

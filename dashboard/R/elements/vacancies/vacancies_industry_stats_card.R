@@ -180,7 +180,8 @@ vacancies_industry_stats_card_server <- function(id, conn = APP_DB$pool) {
           label_col       = "business_metric",
           value_col       = "value",
           palette         = dbt_palettes$gaf,
-          exclude_pattern = "^(All|Total)\\b"   # drop "All vacancies", "Total services", etc.
+          exclude_pattern = "^(All|Total)\\b",   # drop "All vacancies", "Total services", etc.
+          title           = paste0("Latest period: ", format(snap_date, "%b %Y"))
         )
       } else {
         dbt_ts_plot(
