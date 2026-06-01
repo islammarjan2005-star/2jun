@@ -161,8 +161,10 @@ get_workforce_jobs_by_industry_tbl <- function(){
 
   #Time period Parsing and Conversion
 
-  # Build SQL fragment for time_period parsing ("Mar 88" -> 1988-03-01)
-  time_sql <- .date_sql_for("MMM YY", "time_period")
+  # Build SQL fragment for time_period parsing ("Mar 88" / "Dec 25 (p)" -> date)
+  # Recent periods carry provisional "(p)" / revised "(r)" flags, so use the
+  # flag-aware variant of the "MMM YY" parser.
+  time_sql <- .date_sql_for("MMM YY (P/R)", "time_period")
 
   base <- base %>%
     dplyr::mutate(
