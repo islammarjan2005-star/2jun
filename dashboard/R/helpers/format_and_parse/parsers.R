@@ -42,18 +42,36 @@
 }
 
 # Monthly "MMM YY" carrying a trailing provisional/revised flag, e.g.
-# "Dec 25 (p)" or "Mar 25 (r)". Strips a trailing " (x)" marker (any letters,
-# any case) before the 2-digit-year parse. Character classes are used instead
-# of backslash escapes so the pattern is independent of standard_conforming_strings.
+# "Dec 25 (p)" or "Mar 25 (r)" — and tolerant of 2- or 4-digit years.
+#
+# Done deterministically rather than relying on Postgres' built-in 'YY'
+# century heuristic (which can yield nonsense years like 2203):
+#   1. strip a trailing " (x)" marker and surrounding whitespace
+#   2. pull the month name (leading letters) and the year (trailing digits)
+#   3. if the year is 2 digits, apply an explicit century pivot
+#      (<= 50 -> 20xx, else 19xx); 4-digit years are used as-is
+#   4. to_date(... , 'Mon YYYY')
+# Character classes are used instead of backslash escapes so the pattern is
+# independent of standard_conforming_strings.
 .sql_parse_month_yy_flagged <- function(col_name) {
+  clean <- sprintf(
+    "btrim(regexp_replace(%s::text, '[[:space:]]*[(][[:alpha:]]+[)][[:space:]]*$', '', 'g'))",
+    col_name
+  )
+  mon <- sprintf("substring(%s from '^[[:alpha:]]+')", clean)
+  yr  <- sprintf("substring(%s from '[0-9]+$')",       clean)
+
   dbplyr::sql(sprintf("
     to_date(
-      initcap(btrim(
-        regexp_replace(%s::text, '[[:space:]]*[(][[:alpha:]]+[)][[:space:]]*$', '', 'g')
-      )),
-      'Mon YY'
+      initcap(%s) || ' ' ||
+      CASE
+        WHEN length(%s) = 4    THEN %s
+        WHEN (%s)::int <= 50   THEN '20' || %s
+        ELSE                        '19' || %s
+      END,
+      'Mon YYYY'
     )::date
-  ", col_name))
+  ", mon, yr, yr, yr, yr, yr))
 }
 
 .sql_cast_date <- function(col_name) {
