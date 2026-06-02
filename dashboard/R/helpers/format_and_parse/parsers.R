@@ -31,32 +31,29 @@
   dbplyr::sql(sprintf("CAST(%s AS DATE)", col_name))
 }
 
-# Monthly "MMM YY" using to_date with a 2-digit year mask
+# Monthly "MMM YY" using to_date with a 2-digit year mask.
+# Defensively strips ANY parenthetical marker, e.g. provisional "(p)" /
+# revised "(r)" as in "Dec 25 (p)", so it is harmless on clean values
+# ("Mar 88") but robust to flagged ones. The pattern is unanchored so a
+# trailing space/CR after the marker can't stop it matching; '[^)]*' covers
+# any content. Postgres' 'YY' rule (00-69 -> 2000s, 70-99 -> 1900s) is
+# correct for this data (25 -> 2025, 88 -> 1988). Character classes are used
+# instead of backslash escapes so it is independent of standard_conforming_strings.
 .sql_parse_month_yy <- function(col_name) {
   dbplyr::sql(sprintf("
     to_date(
-      initcap(btrim(%s::text)),
+      initcap(btrim(
+        regexp_replace(%s::text, '[[:space:]]*[(][^)]*[)]', '', 'g')
+      )),
       'Mon YY'
     )::date
   ", col_name))
 }
 
-# Monthly "MMM YY" carrying a trailing provisional/revised flag, e.g.
-# "Dec 25 (p)" or "Mar 25 (r)". Strips the trailing " (x)" marker (any
-# letters, any case) and any surrounding whitespace, then does the normal
-# 2-digit-year parse. Postgres' 'YY' rule (00-69 -> 2000s, 70-99 -> 1900s)
-# is correct for this data (25 -> 2025, 88 -> 1988).
-# Character classes are used instead of backslash escapes so the pattern is
-# independent of standard_conforming_strings.
+# Same as .sql_parse_month_yy (kept as a named mode for clarity); both strip
+# any provisional/revised "(x)" marker before the 2-digit-year parse.
 .sql_parse_month_yy_flagged <- function(col_name) {
-  dbplyr::sql(sprintf("
-    to_date(
-      initcap(btrim(
-        regexp_replace(%s::text, '[[:space:]]*[(][[:alpha:]]+[)][[:space:]]*$', '', 'g')
-      )),
-      'Mon YY'
-    )::date
-  ", col_name))
+  .sql_parse_month_yy(col_name)
 }
 
 .sql_cast_date <- function(col_name) {
