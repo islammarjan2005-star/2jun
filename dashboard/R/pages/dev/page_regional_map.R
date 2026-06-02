@@ -267,17 +267,76 @@ output$uk_map <- renderPlotly({
   d   <- region_data()
   geo <- itl1_geo()
 
+  # Bubble map (fallback) as a local helper, so we can drop back to it on ANY
+  # problem with the choropleth, not just when boundaries are missing.
+  bubble_map <- function() {
+    uk_map <- ggplot2::map_data("world", region = c("UK", "Ireland:Northern Ireland"))
+
+    p <- ggplot() +
+      geom_polygon(
+        data = uk_map,
+        aes(x = long, y = lat, group = group),
+        fill = "#f3f2f1", colour = "#b1b4b6", linewidth = 0.3
+      ) +
+      coord_quickmap(xlim = c(-9, 3), ylim = c(49.5, 59.5)) +
+      theme_void() +
+      theme(
+        legend.position = "right",
+        plot.background = element_rect(fill = "#e8f4f8", colour = NA)
+      )
+
+    if (!is.null(d) && nrow(d) > 0) {
+      suffix <- if (grepl("Rate", input$value_type, fixed = TRUE)) "%" else " (000s)"
+
+      vals <- d$value
+      size_range <- c(4, 12)
+      if (length(unique(vals)) == 1L) {
+        d$pt_size <- rep(mean(size_range), length(vals))
+      } else {
+        d$pt_size <- size_range[1] + (vals - min(vals, na.rm = TRUE)) /
+          (max(vals, na.rm = TRUE) - min(vals, na.rm = TRUE)) *
+          (size_range[2] - size_range[1])
+      }
+
+      d$hover_text <- paste0(
+        d$region_name, "\n",
+        input$measure, " (", input$value_type, "): ",
+        format(round(d$value, 1), big.mark = ","), suffix
+      )
+
+      p <- p +
+        geom_point(
+          data = d,
+          aes(x = lon, y = lat, size = pt_size, colour = value),
+          alpha = 0.85
+        ) +
+        scale_colour_gradient(
+          low  = "#1d70b8",
+          high = "#cf102d",
+          name = paste0(input$value_type, suffix)
+        ) +
+        scale_size_identity()
+    }
+
+    ggplotly(p, tooltip = "hover_text") %>%
+      layout(
+        showlegend = FALSE,
+        margin = list(l = 0, r = 0, t = 10, b = 0)
+      ) %>%
+      config(displayModeBar = FALSE)
+  }
+
   # ---- Choropleth (preferred: real ITL1 region shapes) ----
   if (!is.null(geo) && !is.null(d) && nrow(d) > 0) {
-    suffix <- if (grepl("Rate", input$value_type, fixed = TRUE)) "%" else " (000s)"
+    chor <- tryCatch({
+      suffix <- if (grepl("Rate", input$value_type, fixed = TRUE)) "%" else " (000s)"
 
-    d$hover_text <- paste0(
-      d$region_name, "<br>",
-      input$measure, " (", input$value_type, "): ",
-      format(round(d$value, 1), big.mark = ","), suffix
-    )
+      d$hover_text <- paste0(
+        d$region_name, "<br>",
+        input$measure, " (", input$value_type, "): ",
+        format(round(d$value, 1), big.mark = ","), suffix
+      )
 
-    return(
       plot_ly() %>%
         add_trace(
           type         = "choropleth",
@@ -302,66 +361,17 @@ output$uk_map <- renderPlotly({
           paper_bgcolor = "#e8f4f8"
         ) %>%
         config(displayModeBar = FALSE)
-    )
+    },
+    error = function(e) {
+      message("Choropleth render failed, using bubble map: ", conditionMessage(e))
+      NULL
+    })
+
+    if (!is.null(chor)) return(chor)
   }
 
-  # ---- Fallback: bubble map (no ITL1 boundaries available) ----
-  uk_map <- ggplot2::map_data("world", region = c("UK", "Ireland:Northern Ireland"))
-
-  p <- ggplot() +
-    geom_polygon(
-      data = uk_map,
-      aes(x = long, y = lat, group = group),
-      fill = "#f3f2f1", colour = "#b1b4b6", linewidth = 0.3
-    ) +
-    coord_quickmap(xlim = c(-9, 3), ylim = c(49.5, 59.5)) +
-    theme_void() +
-    theme(
-      legend.position = "right",
-      plot.background = element_rect(fill = "#e8f4f8", colour = NA)
-    )
-
-  if (!is.null(d) && nrow(d) > 0) {
-    suffix <- if (grepl("Rate", input$value_type, fixed = TRUE)) "%" else " (000s)"
-
-    vals <- d$value
-    size_range <- c(4, 12)
-    if (length(unique(vals)) == 1L) {
-      d$pt_size <- rep(mean(size_range), length(vals))
-    } else {
-      d$pt_size <- size_range[1] + (vals - min(vals, na.rm = TRUE)) /
-        (max(vals, na.rm = TRUE) - min(vals, na.rm = TRUE)) *
-        (size_range[2] - size_range[1])
-    }
-
-    # keep tooltip in the data, but don't map as an aesthetic
-    d$hover_text <- paste0(
-      d$region_name, "\n",
-      input$measure, " (", input$value_type, "): ",
-      format(round(d$value, 1), big.mark = ","), suffix
-    )
-
-    p <- p +
-      geom_point(
-        data = d,
-        aes(x = lon, y = lat, size = pt_size, colour = value),  # <-- removed text =
-        alpha = 0.85
-      ) +
-      scale_colour_gradient(
-        low  = "#1d70b8",
-        high = "#cf102d",
-        name = paste0(input$value_type, suffix)
-      ) +
-      scale_size_identity()
-  }
-
-  # Tell ggplotly to use the column name for tooltips
-  ggplotly(p, tooltip = "hover_text") %>%
-    layout(
-      showlegend = FALSE,
-      margin = list(l = 0, r = 0, t = 10, b = 0)
-    ) %>%
-    config(displayModeBar = FALSE)
+  # ---- Fallback: bubble map ----
+  bubble_map()
 })
 
 # bar chart
