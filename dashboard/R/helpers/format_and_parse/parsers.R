@@ -31,23 +31,48 @@
   dbplyr::sql(sprintf("CAST(%s AS DATE)", col_name))
 }
 
-# Monthly "MMM YY" using to_date with a 2-digit year mask.
-# Defensively strips ANY parenthetical marker, e.g. provisional "(p)" /
-# revised "(r)" as in "Dec 25 (p)", so it is harmless on clean values
-# ("Mar 88") but robust to flagged ones. The pattern is unanchored so a
-# trailing space/CR after the marker can't stop it matching; '[^)]*' covers
-# any content. Postgres' 'YY' rule (00-69 -> 2000s, 70-99 -> 1900s) is
-# correct for this data (25 -> 2025, 88 -> 1988). Character classes are used
-# instead of backslash escapes so it is independent of standard_conforming_strings.
+# Monthly "MMM YY" (e.g. "Mar 88", "Dec 25", "Dec 25 (p)") -> date.
+#
+# Built WITHOUT to_date(), which guesses leniently and returns nonsense on
+# messy inputs. Two real-world quirks in the ONS workforce-jobs source are
+# handled here:
+#   * provisional "(p)" / revised "(r)" flags, e.g. "Dec 25 (p)"
+#   * a footnote digit appended to the period, e.g. "Mar 203" (= "Mar 20")
+#     or "Mar 194" (= "Mar 19") -- the trailing 3/4 is a flattened superscript
+#     footnote marker, NOT part of the year.
+# Approach:
+#   - normalise whitespace
+#   - token 1 = month name -> map first 3 letters to a month number
+#   - token 2 = year -> keep only digits; if 4+ digits use as-is, otherwise
+#     take the FIRST TWO digits (drops the stray footnote digit) and apply the
+#     century pivot (<= 50 -> 20xx, else 19xx)
+#   - assemble with make_date(year, month, 1)
+# Because only the first two tokens are read and non-digits/extra year digits
+# are dropped, "(p)"/"(r)" flags and footnote digits are both ignored.
 .sql_parse_month_yy <- function(col_name) {
+  clean <- sprintf("btrim(regexp_replace(%s::text, '[[:space:]]+', ' ', 'g'))", col_name)
+  mon   <- sprintf("lower(left(split_part(%s, ' ', 1), 3))", clean)
+  yrd   <- sprintf("regexp_replace(split_part(%s, ' ', 2), '[^0-9]', '', 'g')", clean)
+  y2    <- sprintf("nullif(left(%s, 2), '')", yrd)
+  y4    <- sprintf("nullif(left(%s, 4), '')", yrd)
+  lenx  <- sprintf("length(%s)", yrd)
+
   dbplyr::sql(sprintf("
-    to_date(
-      initcap(btrim(
-        regexp_replace(%s::text, '[[:space:]]*[(][^)]*[)]', '', 'g')
-      )),
-      'Mon YY'
-    )::date
-  ", col_name))
+    make_date(
+      CASE
+        WHEN %s >= 4          THEN (%s)::int
+        WHEN (%s)::int <= 50  THEN 2000 + (%s)::int
+        ELSE                       1900 + (%s)::int
+      END,
+      CASE %s
+        WHEN 'jan' THEN 1  WHEN 'feb' THEN 2  WHEN 'mar' THEN 3
+        WHEN 'apr' THEN 4  WHEN 'may' THEN 5  WHEN 'jun' THEN 6
+        WHEN 'jul' THEN 7  WHEN 'aug' THEN 8  WHEN 'sep' THEN 9
+        WHEN 'oct' THEN 10 WHEN 'nov' THEN 11 WHEN 'dec' THEN 12
+      END,
+      1
+    )
+  ", lenx, y4, y2, y2, y2, mon))
 }
 
 # Same as .sql_parse_month_yy (kept as a named mode for clarity); both strip
