@@ -9,7 +9,7 @@ employment_workforce_industry_stats_card_ui <- function(id) {
       id = ns("workforce_industry_card"),
       publish_marker = "public",
       title = "Workforce Jobs by Industry",
-      help_text = "Seasonally adjusted workforce jobs by industry (SIC 2007 section) in the United Kingdom. The treemap shows the latest period within the selected time range, with each tile sized by the number of jobs.",
+      help_text = "Seasonally adjusted workforce jobs by industry (SIC 2007 section) in the United Kingdom. The treemap shows the latest period within the selected time range; the bar/line/area charts show the trend over time.",
       help_text_source = "Source: ONS - Workforce jobs by industry",
       help_link = "https://data.trade.gov.uk/datasets/4609dc12-0dfa-4734-8ecb-6c50b59d163d",
       help_link_text = "ONS Labour Market Overview",
@@ -36,13 +36,57 @@ employment_workforce_industry_stats_card_ui <- function(id) {
 
       ),
         accordion_controls = list(
-                    shinyWidgets::sliderTextInput(
-                      inputId = ns("top_n"),
-                      label   = "Industries to show",
-                      choices = c("10", "15", "20", "All"),
-                      selected = "All",
-                      grid = TRUE
-                    )
+                        shinyWidgets::radioGroupButtons(
+                      inputId = ns("chart_type"),
+                      label   = "Choose a graph :",
+                      choiceNames = list(
+                        tags$span(`data-toggle`="tooltip", title = "Stacked Bar Chart", tags$i(class = "fa fa-bar-chart")),
+                        tags$span(`data-toggle`="tooltip", title = "Line Chart",        tags$i(class = "fa fa-line-chart")),
+                        tags$span(`data-toggle`="tooltip", title = "Area Chart",        tags$i(class = "fa fa-area-chart")),
+                        tags$span(`data-toggle`="tooltip", title = "Treemap (latest period)", tags$i(class = "fa fa-th-large"))
+                      ),
+                      choiceValues = c("stacked_bar","line","stacked_area","treemap"),
+                      justified = TRUE,
+                      size = "sm",
+                      status = "danger"
+                    ),
+
+                    conditionalPanel(
+                      condition = sprintf("input['%s'] == 'stacked_bar'", ns("chart_type")),
+                      shinyWidgets::sliderTextInput(
+                        inputId = ns("stack_mode"),
+                        label = "Time Interval between bars",
+                        choices = c("monthly","quarterly","annually","5year","decade"),
+                        selected = "annually",
+                        grid = TRUE
+                      )
+                    ),
+
+                    conditionalPanel(
+                      condition = sprintf("input['%s'] == 'treemap'", ns("chart_type")),
+                      shinyWidgets::sliderTextInput(
+                        inputId = ns("top_n"),
+                        label   = "Industries to show",
+                        choices = c("10", "15", "20", "All"),
+                        selected = "All",
+                        grid = TRUE
+                      )
+                    ),
+
+                    mod_annotation_line_ui(ns("date_lines"),
+                          type = "date",
+                          title = "Add key dates",
+                          add_label = "Add key date",
+                          show_delete = TRUE,
+                          auto_mask_date = TRUE),
+
+                    mod_annotation_line_ui(ns("value_lines"),
+                          type = "value",
+                          title = "Add key values",
+                          add_label = "Add key values",
+                          show_delete = TRUE,
+                          auto_mask_date = TRUE)
+
                   )
     )
   )
@@ -51,6 +95,11 @@ employment_workforce_industry_stats_card_ui <- function(id) {
 ## WORKFORCE JOBS BY INDUSTRY SERVER ## ----
 employment_workforce_industry_stats_card_server <- function(id, conn = APP_DB$pool) {
   moduleServer(id, function(input, output, session){
+
+## 0) Defaults + annotations
+    date_lines  <- mod_annotation_line_server("date_lines",  type = "date")
+    value_lines <- mod_annotation_line_server("value_lines", type = "value")
+    shinyWidgets::updateRadioGroupButtons(session, "chart_type", selected = "treemap")
 
 ## 1) Get a full clean lazy table
   cleaned_full_tbl <- reactive({
@@ -121,33 +170,55 @@ employment_workforce_industry_stats_card_server <- function(id, conn = APP_DB$po
     #SQL String
     output$sql_query <- renderText({ dat()$sql })
 
-    #Plot (treemap snapshot of the latest period in the selected range)
+    #Plot (treemap snapshot OR time-series, depending on chart type)
      output$plot <- plotly::renderPlotly({
       out <- dat(); req(nrow(out$data) > 0)
       df <- out$data
 
-      # Snapshot = the most recent period within the selected range
-      snap_date <- max(df$time_period, na.rm = TRUE)
-      snap <- df[!is.na(df$time_period) & df$time_period == snap_date, , drop = FALSE]
+      # This is a "by industry" card, so drop aggregate/total rows
+      # ("All jobs", "Total services") from the charts. Keep them only if
+      # that would otherwise leave nothing to plot.
+      keep <- !grepl("^(All|Total)\\b", df$industry, ignore.case = TRUE, perl = TRUE)
+      if (any(keep)) df <- df[keep, , drop = FALSE]
+      req(nrow(df) > 0)
 
-      # Optional Top-N trimming (largest industries by jobs)
-      n_sel <- input$top_n
-      if (!is.null(n_sel) && !identical(n_sel, "All")) {
-        n_keep <- suppressWarnings(as.integer(n_sel))
-        if (!is.na(n_keep)) {
-          snap <- snap[order(-snap$value), , drop = FALSE]
-          snap <- utils::head(snap, n_keep)
+      # ---- Treemap: snapshot of the latest period in the selected range ----
+      if (identical(input$chart_type, "treemap")) {
+        snap_date <- max(df$time_period, na.rm = TRUE)
+        snap <- df[!is.na(df$time_period) & df$time_period == snap_date, , drop = FALSE]
+
+        # Optional Top-N trimming (largest industries by jobs)
+        n_sel <- input$top_n
+        if (!is.null(n_sel) && !identical(n_sel, "All")) {
+          n_keep <- suppressWarnings(as.integer(n_sel))
+          if (!is.na(n_keep)) {
+            snap <- snap[order(-snap$value), , drop = FALSE]
+            snap <- utils::head(snap, n_keep)
+          }
         }
-      }
-      req(nrow(snap) > 0)
+        req(nrow(snap) > 0)
 
-      dbt_build_treemap(
-        data            = snap,
-        label_col       = "industry",
-        value_col       = "value",
-        palette         = dbt_palettes$gaf,
-        exclude_pattern = "^(All|Total)\\b",   # drop "All jobs", "Total services", etc.
-        title           = paste0("Latest period: ", format(snap_date, "%b %Y"))
+        return(
+          dbt_build_treemap(
+            data       = snap,
+            label_col  = "industry",
+            value_col  = "value",
+            palette    = dbt_palettes$gaf,
+            title      = paste0("Latest period: ", format(snap_date, "%b %Y"))
+          )
+        )
+      }
+
+      # ---- Time series: stacked bar / line / area ----
+      dbt_ts_plot(
+        df = df,
+        chart_type = input$chart_type,
+        bar_interval = input$stack_mode,
+        bar_agg = "last", y_title = "No.",
+        palette = dbt_palettes$gaf, initial_legend_mode = "hidden",
+        group_col = "industry",
+        vlines = date_lines$values_out(), vline_labels = date_lines$labels_out(),
+        hlines = value_lines$values_out(), hline_labels = value_lines$labels_out()
       )
     })
 
