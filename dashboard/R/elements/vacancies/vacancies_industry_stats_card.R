@@ -114,6 +114,25 @@ vacancies_industry_stats_card_server <- function(id, conn = APP_DB$pool) {
       preserve_selection = TRUE
     )
 
+## 2b) Per-option defaults ("Deeper Defaults"): each chart-type button carries
+##     its own sensible sector selection, applied when you press it.
+##       line              -> the grand total only ("All vacancies")
+##       bar / area / treemap -> all component industries (full breakdown)
+    observeEvent(input$chart_type, {
+      vals <- unname(unlist(sector$choices()))
+      if (!length(vals)) return()
+
+      if (identical(input$chart_type, "line")) {
+        allrow <- vals[grepl("^All\\b", vals, ignore.case = TRUE)]
+        sel <- if (length(allrow)) allrow[1] else vals
+      } else {
+        comps <- vals[!grepl("^(All|Total)\\b", vals, ignore.case = TRUE)]
+        sel <- if (length(comps)) comps else vals
+      }
+
+      shinyWidgets::updatePickerInput(session, "sector_filter-sectors", selected = sel)
+    }, ignoreInit = TRUE)
+
 ## 3) Collect all variable inputs that drive the query
     query_inputs <- reactive({
       list(
